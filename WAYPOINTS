@@ -1,0 +1,84 @@
+from dronekit import connect, VehicleMode, LocationGlobalRelative, Command
+from pymavlink import mavutil
+import time
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+# Connect to the Vehicle
+def connect_vehicle(connection_string, baud_rate):
+    try:
+        vehicle = connect(connection_string, wait_ready=True, baud=baud_rate)
+        logging.info("Vehicle connected")
+        return vehicle
+    except Exception as e:
+        logging.error("Failed to connect to the vehicle: %s", str(e))
+        raise
+
+# Arm the Vehicle
+def arm_and_takeoff(vehicle, target_altitude):
+    logging.info("Arming motors")
+    vehicle.mode = VehicleMode("GUIDED")
+    vehicle.armed = True
+
+    while not vehicle.armed:
+        time.sleep(1)
+
+    logging.info("Taking off to %f meters", target_altitude)
+    vehicle.simple_takeoff(target_altitude)
+
+    while True:
+        logging.info("Altitude: %f", vehicle.location.global_relative_frame.alt)
+        if vehicle.location.global_relative_frame.alt >= target_altitude * 0.95:
+            logging.info("Reached target altitude")
+            break
+        time.sleep(1)
+
+# Upload a simple mission with two waypoints to the vehicle.
+def upload_mission(vehicle):
+    cmds = vehicle.commands
+    cmds.clear()
+
+    # Define the two waypoints
+    wp1 = LocationGlobalRelative(17.5990123, 78.4310793, 3)
+    wp2 = LocationGlobalRelative(17.5990091, 78.4310585, 4)
+
+    # Add waypoints to the mission
+    cmds.add(Command(0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                     mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0, 0, 0,
+                     wp1.lat, wp1.lon, wp1.alt))
+    cmds.add(Command(0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                     mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0, 0, 0,
+                     wp2.lat, wp2.lon, wp2.alt))
+    cmds.upload()
+    logging.info("Mission uploaded successfully")
+
+# Main function to execute the mission
+def main():
+    connection_string = '/dev/ttyAMA0'
+    baud_rate = 57600
+    target_altitude = 3
+
+    try:
+        vehicle = connect_vehicle(connection_string, baud_rate)
+        arm_and_takeoff(vehicle, target_altitude)
+        upload_mission(vehicle)
+
+        # Wait for the mission to complete
+        while vehicle.commands.next != vehicle.commands.count:
+            time.sleep(1)
+
+        logging.info("Mission complete!")
+        
+        # Return to launch and land
+        vehicle.mode = VehicleMode("RTL")
+
+    except Exception as e:
+        logging.error("An error occurred: %s", str(e))
+    finally:
+        if 'vehicle' in locals():
+            vehicle.close()
+            logging.info("Vehicle connection closed")
+
+if _name_ == "_main_":
+    main()
